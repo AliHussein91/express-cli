@@ -70,6 +70,7 @@ my-new-api/
 ├── .env
 ├── .gitignore
 ├── package.json
+└── public/
 └── src/
     ├── app.js
     ├── index.js
