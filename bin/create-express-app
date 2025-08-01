@@ -1,0 +1,239 @@
+#!/usr/bin/env node
+
+import {Command} from 'commander';
+import fs from 'fs';
+import path from 'path';
+import {execSync} from 'child_process';
+import chalk from 'chalk';
+import inquirer from 'inquirer';
+import {fileURLToPath} from 'url';
+
+const program = new Command();
+
+// Helper to get the path of the current script, which is needed for ES Modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+program
+	.name('create-express-app')
+	.description(
+		'CLI to scaffold a new Express.js application with a predefined structure'
+	)
+	.argument('<project-name>', 'The name of the project to create')
+	.action(async (projectName) => {
+		try {
+			// --- Ask User for Configuration ---
+			const answers = await inquirer.prompt([
+				{
+					type: 'list',
+					name: 'database',
+					message: 'Which database would you like to use?',
+					choices: ['MongoDB', 'PostgreSQL', 'MySQL', 'None'],
+					default: 'MongoDB',
+				},
+				{
+					type: 'confirm',
+					name: 'includeUserResource',
+					message:
+						'Would you like to include a boilerplate User resource (model, controller, routes)?',
+					default: true,
+					when: (answers) => answers.database !== 'None', // Only ask if a DB is selected
+				},
+				{
+					type: 'checkbox',
+					name: 'middleware',
+					message: 'Which common middleware would you like to include?',
+					choices: [
+						{name: 'Authentication (JWT)', value: 'auth'},
+						{name: 'Request Logger (Morgan)', value: 'logger'},
+						{name: 'Centralized Error Handling', value: 'error'},
+					],
+					default: ['auth', 'error'],
+				},
+			]);
+
+			const {database, includeUserResource, middleware} = answers;
+			console.log(
+				chalk.blue(`🚀 Creating project: ${projectName} with ${database}...`)
+			);
+
+			const projectPath = path.join(process.cwd(), projectName);
+
+			// --- 1. Create Project Folder ---
+			if (fs.existsSync(projectPath)) {
+				console.error(
+					chalk.red(`Error: Directory '${projectName}' already exists.`)
+				);
+				process.exit(1);
+			}
+			fs.mkdirSync(projectPath);
+
+			// --- 2. Create Directory Structure ---
+			const dirs = [
+				'public',
+				'src/config',
+				'src/controllers',
+				'src/middlewares',
+				'src/models',
+				'src/routes',
+				'src/services',
+				'src/utils',
+				'public/images',
+			];
+			console.log(chalk.gray('   Creating directories...'));
+			dirs.forEach((dir) =>
+				fs.mkdirSync(path.join(projectPath, dir), {recursive: true})
+			);
+
+			// --- 3. Create Base Utility and Config Files ---
+			const baseFiles = {
+				'src/utils/ApiError.js': `class ApiError extends Error { constructor(statusCode, message= "Something went wrong", errors = [], stack = "") { super(message); this.statusCode = statusCode; this.data = null; this.message = message; this.success = false; this.errors = errors; if (stack) { this.stack = stack } else { Error.captureStackTrace(this, this.constructor) } } } export { ApiError };`,
+				'src/utils/ApiResponse.js': `class ApiResponse { constructor(statusCode, data, message = "Success"){ this.statusCode = statusCode; this.data = data; this.message = message; this.success = true; } } export { ApiResponse };`,
+				'src/utils/asyncHandler.js': `const asyncHandler = (requestHandler) => { return (req, res, next) => { Promise.resolve(requestHandler(req, res, next)).catch((err) => next(err)) } } export { asyncHandler };`,
+				'src/constants.js': `export const DB_NAME = "${projectName}";`,
+				'src/index.js': `import dotenv from 'dotenv';\nimport connectDB from './config/db.js';\nimport { app } from './app.js';\ndotenv.config({path: './.env'});\nconnectDB().then(() => { app.listen(process.env.PORT || 8000, () => console.log('🚀 Server is running on port: ' + process.env.PORT)) }).catch(err => console.log('DB connection failed!', err));`,
+				'.gitignore': 'node_modules/\n.env\n',
+			};
+			console.log(chalk.gray('   Creating base files...'));
+			Object.entries(baseFiles).forEach(([filePath, content]) => {
+				fs.writeFileSync(path.join(projectPath, filePath), content);
+			});
+
+			// --- 4. Handle Database, Resources, and Middleware ---
+			const dbLower = database.toLowerCase();
+			let envContent = `PORT=8000\nCORS_ORIGIN=*\n`;
+
+			if (database !== 'None') {
+				const dbTemplatePath = path.join(
+					__dirname,
+					'..',
+					'templates',
+					dbLower,
+					'db.js'
+				);
+				if (fs.existsSync(dbTemplatePath)) {
+					fs.copyFileSync(
+						dbTemplatePath,
+						path.join(projectPath, 'src/config/db.js')
+					);
+				}
+
+				// Add DB-specific environment variables
+				if (database === 'MongoDB')
+					envContent += `MONGODB_URI=mongodb://localhost:27017\n`;
+				if (database === 'PostgreSQL')
+					envContent += `POSTGRES_URI=postgresql://user:password@localhost:5432/${projectName}\n`;
+				if (database === 'MySQL')
+					envContent += `MYSQL_HOST=localhost\nMYSQL_USER=root\nMYSQL_PASSWORD=\nMYSQL_DATABASE=${projectName}\n`;
+
+				if (includeUserResource) {
+					console.log(chalk.gray('   Adding User resource...'));
+					['user.model.js', 'user.controller.js', 'user.service.js'].forEach(
+						(file) => {
+							const templateDir = path.join(
+								__dirname,
+								'..',
+								'templates',
+								dbLower
+							);
+							const sharedTemplateDir = path.join(
+								__dirname,
+								'..',
+								'templates',
+								'mongodb'
+							); // Fallback for shared files
+							const templatePath = fs.existsSync(path.join(templateDir, file))
+								? path.join(templateDir, file)
+								: path.join(sharedTemplateDir, file);
+
+							const destFolder = file.includes('model')
+								? 'models'
+								: file.includes('controller')
+								? 'controllers'
+								: 'services';
+							fs.copyFileSync(
+								templatePath,
+								path.join(projectPath, `src/${destFolder}/${file}`)
+							);
+						}
+					);
+
+					// Create user routes file
+					const userRoutesContent = `import { Router } from 'express';\nimport { createUser, getUserById } from '../controllers/user.controller.js';\nconst router = Router();\n\nrouter.route('/').post(createUser);\nrouter.route('/:userId').get(getUserById);\n\nexport default router;`;
+					fs.writeFileSync(
+						path.join(projectPath, 'src/routes/user.routes.js'),
+						userRoutesContent
+					);
+				}
+			}
+
+			// Add middleware-specific environment variables
+			if (middleware.includes('auth')) {
+				envContent +=
+					'ACCESS_TOKEN_SECRET=your_super_secret_key\nACCESS_TOKEN_EXPIRY=1d\nREFRESH_TOKEN_SECRET=your_super_refresh_secret_key\nREFRESH_TOKEN_EXPIRY=10d\n';
+			}
+			fs.writeFileSync(path.join(projectPath, '.env'), envContent);
+
+			// Copy selected middleware templates
+			middleware.forEach((mw) => {
+				const mwTemplatePath = path.join(
+					__dirname,
+					'..',
+					'templates',
+					'middlewares',
+					`${mw}.middleware.js`
+				);
+				if (fs.existsSync(mwTemplatePath)) {
+					fs.copyFileSync(
+						mwTemplatePath,
+						path.join(projectPath, `src/middlewares/${mw}.middleware.js`)
+					);
+				}
+			});
+
+			// --- 5. Create and Populate app.js ---
+			let appJsContent = `import express from 'express';\nimport cors from 'cors';\nimport cookieParser from 'cookie-parser';\n\nconst app = express();\n\n`;
+			if (middleware.includes('logger'))
+				appJsContent += `import logger from 'morgan';\napp.use(logger('dev'));\n`;
+			appJsContent += `app.use(cors({ origin: process.env.CORS_ORIGIN, credentials: true }));\napp.use(express.json({limit: '16kb'}));\napp.use(express.urlencoded({extended: true, limit: '16kb'}));\napp.use(express.static('public'));\napp.use(cookieParser());\n\n// --- Routes Declaration --- \n`;
+			if (includeUserResource) {
+				appJsContent += `import userRouter from './routes/user.routes.js';\napp.use('/api/v1/users', userRouter);\n`;
+			}
+			if (middleware.includes('error'))
+				appJsContent += `import { errorHandler } from './middlewares/error.middleware.js';\napp.use(errorHandler);\n`;
+			appJsContent += `\nexport { app };\n`;
+			fs.writeFileSync(path.join(projectPath, 'src/app.js'), appJsContent);
+
+			// --- 6. Initialize Project and Install Dependencies ---
+			console.log(chalk.gray('   Initializing npm and git...'));
+			execSync(`cd "${projectPath}" && npm init -y`);
+			execSync(`cd "${projectPath}" && git init`);
+
+			console.log(chalk.gray('   Installing dependencies...'));
+			let dependencies = 'express cors cookie-parser dotenv';
+			if (database === 'MongoDB') dependencies += ' mongoose';
+			if (database === 'PostgreSQL') dependencies += ' pg';
+			if (database === 'MySQL') dependencies += ' mysql2';
+			if (middleware.includes('auth')) dependencies += ' jsonwebtoken bcrypt';
+			if (middleware.includes('logger')) dependencies += ' morgan';
+			execSync(`cd "${projectPath}" && npm install ${dependencies}`);
+
+			console.log(
+				chalk.green.bold('\n✅ Project structure created successfully!')
+			);
+			console.log(
+				chalk.cyan(`\nNavigate to your project:\n  cd ${projectName}`)
+			);
+			console.log(
+				chalk.cyan(
+					`\nStart the development server (you may need to add this to package.json):\n  npm run dev`
+				)
+			);
+			console.log(chalk.cyan(`\nHappy coding!`));
+		} catch (error) {
+			console.error(chalk.red('An error occurred:'), error.message);
+			process.exit(1);
+		}
+	});
+
+program.parse(process.argv);

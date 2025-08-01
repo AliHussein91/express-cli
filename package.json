@@ -1,0 +1,41 @@
+{
+  "name": "express-cli",
+  "version": "1.0.0",
+  "description": "A CLI to scaffold Express.js applications.",
+  "main": "index.js",
+  "type": "module",
+  "bin": {
+    "create-express-app": "./bin/create-express-app"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": ["express", "cli", "scaffold"],
+  "author": "Your Name",
+  "license": "ISC",
+  "dependencies": {
+    "ansi-escapes": "^4.3.2",
+    "ansi-regex": "^5.0.1",
+    "ansi-styles": "^4.3.0",
+    "chalk": "^5.4.1",
+    "chardet": "^0.7.0",
+    "cli-width": "^4.1.0",
+    "color-convert": "^2.0.1",
+    "color-name": "^1.1.4",
+    "commander": "^14.0.0",
+    "emoji-regex": "^8.0.0",
+    "external-editor": "^3.1.0",
+    "iconv-lite": "^0.4.24",
+    "inquirer": "^12.9.0",
+    "is-fullwidth-code-point": "^3.0.0",
+    "mute-stream": "^2.0.0",
+    "os-tmpdir": "^1.0.2",
+    "run-async": "^4.0.5"
+  },
+  "devDependencies": {},
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "ali.hussein@live.com",
+  "license": "ISC"
+}
